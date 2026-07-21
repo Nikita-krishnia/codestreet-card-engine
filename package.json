@@ -1,0 +1,26 @@
+{
+  "name": "codestreet-card-engine",
+  "version": "1.0.0",
+  "description": "Detects when a card transaction qualifies for an unused insurance/protection\r benefit (purchase protection, return protection, travel delay insurance) and\r pre-fills the claim automatically, so card members never miss a benefit\r they've already paid for.",
+  "main": "rules.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Nikita-krishnia/codestreet-card-engine.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Nikita-krishnia/codestreet-card-engine/issues"
+  },
+  "homepage": "https://github.com/Nikita-krishnia/codestreet-card-engine#readme",
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "pg": "^8.22.0"
+  }
+}

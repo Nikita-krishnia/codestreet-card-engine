@@ -13,21 +13,22 @@
  *
  * Swap the `db` object for DynamoDB/MySQL later without touching the rules engine.
  */
-
+require("dotenv").config();
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const { randomUUID } = require("crypto");
 const { evaluateTransaction } = require("./rules");
+const db = require("./db");
 
 const PUBLIC_DIR = path.join(__dirname, "public");
 
-// --- Fake in-memory "database" ---
-const db = {
-  transactions: [],
-  entitlements: [],
-  claims: [],
-};
+// // --- Fake in-memory "database" ---
+// const db = {
+//   transactions: [],
+//   entitlements: [],
+//   claims: [],
+// };
 
 const MIME = {
   ".html": "text/html",
@@ -87,7 +88,7 @@ function serveStatic(req, res, urlPath) {
 // Shared core: takes a raw transaction object and runs it through the engine.
 // Both the manual test endpoint AND the automated webhook call this same function —
 // this is the one place "detection" actually happens.
-function processTransaction(raw) {
+async function processTransaction(raw) {
   const tx = {
     id: randomUUID(),
     cardId: raw.cardId,
@@ -98,16 +99,44 @@ function processTransaction(raw) {
     description: raw.description || "",
     createdAt: new Date().toISOString(),
   };
-  db.transactions.push(tx);
+  await db.query(
+    `INSERT INTO transactions (id, card_id, merchant_name, mcc_code, amount, purchase_date, description)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [tx.id, tx.cardId, tx.merchantName, tx.mccCode, tx.amount, tx.date, tx.description]
+  );
 
+  // 2. Run Engine Rules
   const matches = evaluateTransaction(tx);
-  const newEntitlements = matches.map((m) => ({
-    id: randomUUID(),
-    transactionId: tx.id,
-    ...m,
-    status: "detected",
-  }));
-  db.entitlements.push(...newEntitlements);
+
+  // 3. Save Entitlements to Supabase
+  const newEntitlements = [];
+  for (const m of matches) {
+    const ent = {
+      id: randomUUID(),
+      transactionId: tx.id,
+      ...m,
+      status: "detected",
+    };
+
+    await db.query(
+      `INSERT INTO entitlements (id, transaction_id, benefit_type, label, reason, detected_at, expires_at, max_coverage, prefill, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [
+        ent.id,
+        ent.transactionId,
+        ent.benefitType,
+        ent.label,
+        ent.reason,
+        ent.detectedAt,
+        ent.expiresAt,
+        ent.maxCoverage,
+        JSON.stringify(ent.prefill),
+        ent.status,
+      ]
+    );
+
+    newEntitlements.push(ent);
+  }
 
   return { transaction: tx, entitlements: newEntitlements };
 }
@@ -117,27 +146,25 @@ function processTransaction(raw) {
 // transaction by hand to test the engine. Real production traffic never
 // hits this route; see /api/webhooks/transactions below.
 async function handlePostTransaction(req, res) {
-  let body;
   try {
-    body = await readBody(req);
-  } catch {
-    return sendJSON(res, 400, { error: "Invalid JSON body" });
-  }
+    const body = await readBody(req);
+    const { cardId, merchantName, mccCode, amount, date } = body;
+    if (!cardId || !merchantName || !mccCode || !amount || !date) {
+      return sendJSON(res, 400, { error: "Missing required fields" });
+    }
 
-  const { cardId, merchantName, mccCode, amount, date } = body;
-  if (!cardId || !merchantName || !mccCode || !amount || !date) {
-    return sendJSON(res, 400, {
-      error: "cardId, merchantName, mccCode, amount, and date are required",
+    const { transaction, entitlements } = await processTransaction(body);
+    sendJSON(res, 201, {
+      transaction,
+      benefitsDetected: entitlements.length,
+      entitlements,
     });
+  } catch (err) {
+    console.error("Error processing transaction:", err);
+    sendJSON(res, 500, { error: "Server error" });
   }
-
-  const { transaction, entitlements } = processTransaction(body);
-  sendJSON(res, 201, {
-    transaction,
-    benefitsDetected: entitlements.length,
-    entitlements,
-  });
 }
+
 
 // POST /api/webhooks/transactions
 // THIS is the real-world entry point. A card processor (Stripe Issuing,
@@ -172,7 +199,7 @@ async function handleWebhookTransaction(req, res) {
     description: (event.merchant_data && event.merchant_data.name) || event.description || "",
   };
 
-  const { transaction, entitlements } = processTransaction(normalized);
+  const { transaction, entitlements } = await processTransaction(normalized);
 
   console.log(
     `[webhook] card authorization received: ${transaction.merchantName} $${transaction.amount} -> ${entitlements.length} benefit(s) matched`
@@ -182,51 +209,100 @@ async function handleWebhookTransaction(req, res) {
   sendJSON(res, 200, { received: true, benefitsDetected: entitlements.length });
 }
 
-function handleGetEntitlements(req, res, query) {
-  let list = db.entitlements;
-  if (query.cardId) {
-    list = list.filter((e) => {
-      const tx = db.transactions.find((t) => t.id === e.transactionId);
-      return tx && tx.cardId === query.cardId;
-    });
+async function handleGetEntitlements(req, res, query) {
+  try {
+    let sql = `
+      SELECT e.*, t.card_id 
+      FROM entitlements e
+      JOIN transactions t ON e.transaction_id = t.id
+    `;
+    const params = [];
+
+    if (query.cardId) {
+      sql += ` WHERE t.card_id = $1`;
+      params.push(query.cardId);
+    }
+
+    sql += ` ORDER BY e.detected_at DESC`;
+
+    const result = await db.query(sql, params);
+    const entitlements = result.rows.map((row) => ({
+      id: row.id,
+      transactionId: row.transaction_id,
+      benefitType: row.benefit_type,
+      label: row.label,
+      reason: row.reason,
+      detectedAt: row.detected_at,
+      expiresAt: row.expires_at,
+      maxCoverage: row.max_coverage,
+      prefill: typeof row.prefill === "string" ? JSON.parse(row.prefill) : row.prefill,
+      status: row.status,
+    }));
+
+    sendJSON(res, 200, entitlements);
+  } catch (err) {
+    console.error("Get entitlements error:", err);
+    sendJSON(res, 500, { error: "Failed to fetch entitlements" });
   }
-  sendJSON(res, 200, list);
 }
+
 
 async function handlePostClaim(req, res) {
-  let body;
   try {
-    body = await readBody(req);
-  } catch {
-    return sendJSON(res, 400, { error: "Invalid JSON body" });
+    const body = await readBody(req);
+    const { entitlementId, fields } = body;
+
+    const entRes = await db.query(`SELECT * FROM entitlements WHERE id = $1`, [entitlementId]);
+    if (entRes.rows.length === 0) {
+      return sendJSON(res, 404, { error: "Entitlement not found" });
+    }
+
+    const entitlement = entRes.rows[0];
+    const prefillData = typeof entitlement.prefill === "string" ? JSON.parse(entitlement.prefill) : entitlement.prefill;
+    const claimId = randomUUID();
+    const mergedFields = { ...prefillData, ...(fields || {}) };
+
+    await db.query(
+      `INSERT INTO claims (id, entitlement_id, fields, status) VALUES ($1, $2, $3, $4)`,
+      [claimId, entitlementId, JSON.stringify(mergedFields), "submitted"]
+    );
+
+    await db.query(`UPDATE entitlements SET status = 'submitted' WHERE id = $1`, [entitlementId]);
+
+    sendJSON(res, 201, { id: claimId, entitlementId, status: "submitted" });
+  } catch (err) {
+    console.error("Post claim error:", err);
+    sendJSON(res, 500, { error: "Claim submission failed" });
   }
+}
 
-  const { entitlementId, fields } = body;
-  const entitlement = db.entitlements.find((e) => e.id === entitlementId);
-  if (!entitlement) {
-    return sendJSON(res, 404, { error: "Entitlement not found" });
+async function handleGetClaims(req, res) {
+  try {
+    const result = await db.query(`SELECT * FROM claims ORDER BY submitted_at DESC`);
+    const claims = result.rows.map(row => ({
+      id: row.id,
+      entitlementId: row.entitlement_id,
+      fields: typeof row.fields === "string" ? JSON.parse(row.fields) : row.fields,
+      status: row.status,
+      submittedAt: row.submitted_at
+    }));
+    sendJSON(res, 200, claims);
+  } catch (err) {
+    console.error("Get claims error:", err);
+    sendJSON(res, 500, { error: "Failed to fetch claims" });
   }
-
-  const claim = {
-    id: randomUUID(),
-    entitlementId,
-    fields: { ...entitlement.prefill, ...(fields || {}) },
-    status: "submitted",
-    submittedAt: new Date().toISOString(),
-  };
-  db.claims.push(claim);
-  entitlement.status = "submitted";
-
-  sendJSON(res, 201, claim);
 }
 
-function handleGetClaims(req, res) {
-  sendJSON(res, 200, db.claims);
+async function handleGetTransactions(req, res) {
+  try {
+    const result = await db.query(`SELECT * FROM transactions ORDER BY created_at DESC`);
+    sendJSON(res, 200, result.rows);
+  } catch (err) {
+    console.error("Get transactions error:", err);
+    sendJSON(res, 500, { error: "Failed to fetch transactions" });
+  }
 }
 
-function handleGetTransactions(req, res) {
-  sendJSON(res, 200, db.transactions);
-}
 
 // --- Router ---
 
@@ -243,16 +319,16 @@ const server = http.createServer(async (req, res) => {
       return await handleWebhookTransaction(req, res);
     }
     if (req.method === "GET" && pathname === "/api/entitlements") {
-      return handleGetEntitlements(req, res, query);
+      return await handleGetEntitlements(req, res, query);
     }
     if (req.method === "POST" && pathname === "/api/claims") {
       return await handlePostClaim(req, res);
     }
     if (req.method === "GET" && pathname === "/api/claims") {
-      return handleGetClaims(req, res);
+      return await handleGetClaims(req, res);
     }
     if (req.method === "GET" && pathname === "/api/transactions") {
-      return handleGetTransactions(req, res);
+      return await handleGetTransactions(req, res);
     }
     if (req.method === "GET") {
       return serveStatic(req, res, pathname);
