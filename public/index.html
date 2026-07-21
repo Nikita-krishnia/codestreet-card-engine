@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Card Benefit Activation Engine</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --border: #262b36;
+    --text: #e7e9ee;
+    --muted: #8b92a3;
+    --accent: #5b8cff;
+    --good: #34c98a;
+    --warn: #ffb454;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    padding: 24px 32px;
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 { margin: 0 0 4px; font-size: 20px; }
+  header p { margin: 0; color: var(--muted); font-size: 14px; }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 380px 1fr;
+    gap: 24px;
+    padding: 24px 32px;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  @media (max-width: 850px) {
+    .layout { grid-template-columns: 1fr; }
+  }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+  }
+  .panel h2 { margin: 0 0 16px; font-size: 15px; color: var(--text); }
+
+  label { display: block; font-size: 12px; color: var(--muted); margin: 12px 0 4px; }
+  input, select {
+    width: 100%;
+    padding: 9px 10px;
+    background: #0d0f14;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-size: 14px;
+  }
+  button {
+    margin-top: 18px;
+    width: 100%;
+    padding: 11px;
+    background: var(--accent);
+    border: none;
+    border-radius: 8px;
+    color: white;
+    font-weight: 600;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  button:hover { opacity: 0.9; }
+
+  .presets { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .preset-btn {
+    margin: 0; width: auto; padding: 6px 10px;
+    background: #232838; font-size: 12px; font-weight: 500;
+  }
+
+  .empty {
+    color: var(--muted);
+    font-size: 14px;
+    padding: 20px 0;
+  }
+
+  .alert-card {
+    border: 1px solid var(--border);
+    background: #12151c;
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 14px;
+    animation: pop 0.25s ease;
+  }
+  @keyframes pop {
+    from { opacity: 0; transform: translateY(-6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .alert-top { display: flex; justify-content: space-between; align-items: center; }
+  .badge {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: rgba(52, 201, 138, 0.15);
+    color: var(--good);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .expiry { font-size: 12px; color: var(--warn); }
+  .alert-card h3 { margin: 10px 0 4px; font-size: 16px; }
+  .alert-card p.reason { margin: 0 0 10px; color: var(--muted); font-size: 13px; }
+
+  .prefill {
+    background: #0d0f14;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 12.5px;
+    margin-bottom: 10px;
+  }
+  .prefill div { display: flex; justify-content: space-between; padding: 3px 0; }
+  .prefill span:first-child { color: var(--muted); }
+
+  .claim-btn {
+    margin-top: 0;
+    background: var(--good);
+  }
+  .claim-btn:disabled { background: #2a3038; color: var(--muted); cursor: default; }
+
+  .tx-log { margin-top: 8px; font-size: 12.5px; color: var(--muted); }
+  .tx-log div { padding: 4px 0; border-bottom: 1px dashed var(--border); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>💳 Card Benefit Activation Engine</h1>
+  <p>
+    <span id="liveDot">🟢</span>
+    Listening for card authorizations in real time — benefit alerts appear automatically, no manual entry required.
+  </p>
+</header>
+
+<div class="layout">
+
+  <!-- LEFT: dev-only manual test form -->
+  <div class="panel">
+    <h2>🧪 Dev Test Panel <span style="font-weight:400;color:var(--muted);font-size:12px;">(simulates one card swipe)</span></h2>
+    <p style="font-size:12.5px;color:var(--muted);margin-top:-6px;">
+      In production this form doesn't exist — transactions arrive automatically via
+      a webhook from the card processor. Run <code>node simulator.js</code> in a second
+      terminal to see that happen live. This form is just for manually poking the engine.
+    </p>
+    <form id="txForm">
+      <label>Card ID</label>
+      <input type="text" id="cardId" value="card_001" required />
+
+      <label>Merchant Name</label>
+      <input type="text" id="merchantName" placeholder="e.g. Best Buy" required />
+
+      <label>MCC Code</label>
+      <input type="text" id="mccCode" placeholder="e.g. 5732" required />
+
+      <label>Amount (USD)</label>
+      <input type="number" id="amount" placeholder="e.g. 899.00" step="0.01" required />
+
+      <label>Purchase Date</label>
+      <input type="date" id="date" required />
+
+      <label>Description (optional)</label>
+      <input type="text" id="description" placeholder="e.g. 55in TV" />
+
+      <button type="submit">Submit Transaction</button>
+    </form>
+
+    <div class="presets">
+      <button type="button" class="preset-btn" data-preset="electronics">🖥️ Electronics purchase</button>
+      <button type="button" class="preset-btn" data-preset="flight">✈️ Flight ticket</button>
+      <button type="button" class="preset-btn" data-preset="coffee">☕ Coffee (no benefit)</button>
+    </div>
+
+    <div class="tx-log" id="txLog"></div>
+  </div>
+
+  <!-- RIGHT: detected benefits -->
+  <div class="panel">
+    <h2>Detected Benefits</h2>
+    <div id="alerts"><div class="empty">No benefits detected yet — submit a transaction to test the engine.</div></div>
+  </div>
+
+</div>
+
+<script>
+const form = document.getElementById("txForm");
+const alertsEl = document.getElementById("alerts");
+const txLogEl = document.getElementById("txLog");
+document.getElementById("date").valueAsDate = new Date();
+
+const CARD_ID = "card_001"; // in a real app this comes from the logged-in user's session
+const seenEntitlementIds = new Set();
+
+// --- Passive listening loop ---
+// This is the piece that replicates real life: the dashboard doesn't wait
+// for a form submit. It polls the backend (or in production, would hold a
+// WebSocket / push subscription open) and renders any NEW benefit the
+// engine has detected — even if it came from the automated simulator/webhook
+// and no human touched this page at all.
+async function pollForNewBenefits() {
+  try {
+    const res = await fetch(`/api/entitlements?cardId=${CARD_ID}`);
+    const entitlements = await res.json();
+
+    const fresh = entitlements.filter(e => !seenEntitlementIds.has(e.id));
+    if (fresh.length > 0) {
+      if (alertsEl.querySelector(".empty")) alertsEl.innerHTML = "";
+      fresh.forEach(ent => {
+        seenEntitlementIds.add(ent.id);
+        renderAlert(ent);
+      });
+    }
+  } catch (err) {
+    console.error("Polling failed:", err);
+  }
+}
+setInterval(pollForNewBenefits, 2000); // check every 2s, like a live feed
+pollForNewBenefits();
+
+const presets = {
+  electronics: { merchantName: "Best Buy", mccCode: "5732", amount: 899.00, description: "55in Smart TV" },
+  flight: { merchantName: "United Airlines", mccCode: "3000", amount: 450.00, description: "Round-trip flight" },
+  coffee: { merchantName: "Local Coffee Shop", mccCode: "5814", amount: 4.50, description: "Latte" },
+};
+
+document.querySelectorAll(".preset-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const p = presets[btn.dataset.preset];
+    document.getElementById("merchantName").value = p.merchantName;
+    document.getElementById("mccCode").value = p.mccCode;
+    document.getElementById("amount").value = p.amount;
+    document.getElementById("description").value = p.description;
+  });
+});
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+
+  const payload = {
+    cardId: document.getElementById("cardId").value,
+    merchantName: document.getElementById("merchantName").value,
+    mccCode: document.getElementById("mccCode").value,
+    amount: parseFloat(document.getElementById("amount").value),
+    date: document.getElementById("date").value,
+    description: document.getElementById("description").value,
+  };
+
+  const res = await fetch("/api/transactions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+
+  logTransaction(payload, data.benefitsDetected);
+
+  // Mark these as already-seen so the polling loop (which is the "real"
+  // real-time path) doesn't render them a second time.
+  if (data.benefitsDetected > 0) {
+    if (alertsEl.querySelector(".empty")) alertsEl.innerHTML = "";
+    data.entitlements.forEach(ent => {
+      seenEntitlementIds.add(ent.id);
+      renderAlert(ent);
+    });
+  } else {
+    flashNoMatch();
+  }
+
+  document.getElementById("merchantName").value = "";
+  document.getElementById("mccCode").value = "";
+  document.getElementById("amount").value = "";
+  document.getElementById("description").value = "";
+});
+
+function logTransaction(tx, matchCount) {
+  const row = document.createElement("div");
+  row.textContent = `${tx.merchantName} — $${tx.amount} (MCC ${tx.mccCode}) → ${matchCount} benefit(s) matched`;
+  txLogEl.prepend(row);
+}
+
+function flashNoMatch() {
+  const div = document.createElement("div");
+  div.className = "alert-card";
+  div.style.borderColor = "#3a3f4a";
+  div.innerHTML = `<p class="reason" style="margin:0;">No eligible benefits found for that transaction (MCC not covered by any active rule).</p>`;
+  alertsEl.prepend(div);
+  setTimeout(() => div.remove(), 3500);
+}
+
+function renderAlert(ent) {
+  const card = document.createElement("div");
+  card.className = "alert-card";
+
+  const prefillRows = Object.entries(ent.prefill)
+    .map(([k, v]) => `<div><span>${labelize(k)}</span><span>${v ?? "—"}</span></div>`)
+    .join("");
+
+  card.innerHTML = `
+    <div class="alert-top">
+      <span class="badge">Benefit Detected</span>
+      <span class="expiry">Claim by ${ent.expiresAt}</span>
+    </div>
+    <h3>${ent.label}</h3>
+    <p class="reason">${ent.reason}</p>
+    <div class="prefill">${prefillRows}</div>
+    <button class="claim-btn">File Pre-Filled Claim</button>
+  `;
+
+  card.querySelector(".claim-btn").addEventListener("click", async (btnEvent) => {
+    const btn = btnEvent.target;
+    btn.disabled = true;
+    btn.textContent = "Submitting...";
+    const res = await fetch("/api/claims", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ entitlementId: ent.id, fields: {} }),
+    });
+    if (res.ok) {
+      btn.textContent = "✓ Claim Submitted";
+    } else {
+      btn.textContent = "Failed — retry";
+      btn.disabled = false;
+    }
+  });
+
+  alertsEl.prepend(card);
+}
+
+function labelize(key) {
+  return key.replace(/([A-Z])/g, " $1").replace(/^./, s => s.toUpperCase());
+}
+</script>
+
+</body>
+</html>
