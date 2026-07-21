@@ -15,9 +15,9 @@ public/index.html — the dashboard now polls every 2 seconds for new entitlemen
 Open two terminals in the project folder:
 
 
-# Terminal 1
+Terminal 1
 node server.js
 
-# Terminal 2 — this plays the role of Visa/Stripe/your bank
+Terminal 2 — this plays the role of Visa/Stripe/your bank
 node simulator.js
 
