@@ -303,6 +303,63 @@ async function handleGetTransactions(req, res) {
   }
 }
 
+// GET /api/benefits-history
+// Returns all entitlements joined with transaction details and claim status
+// for the Claimed Benefits History panel on the frontend.
+async function handleGetBenefitsHistory(req, res) {
+  try {
+    const result = await db.query(`
+      SELECT 
+        e.id,
+        e.benefit_type,
+        e.label,
+        e.reason,
+        e.detected_at,
+        e.expires_at,
+        e.max_coverage,
+        e.prefill,
+        e.status,
+        t.card_id,
+        t.merchant_name,
+        t.mcc_code,
+        t.amount,
+        t.purchase_date,
+        t.description AS tx_description,
+        c.id AS claim_id,
+        c.submitted_at AS claim_submitted_at
+      FROM entitlements e
+      JOIN transactions t ON e.transaction_id = t.id
+      LEFT JOIN claims c ON c.entitlement_id = e.id
+      ORDER BY e.detected_at DESC
+    `);
+
+    const history = result.rows.map(row => ({
+      id: row.id,
+      benefitType: row.benefit_type,
+      label: row.label,
+      reason: row.reason,
+      detectedAt: row.detected_at,
+      expiresAt: row.expires_at,
+      maxCoverage: parseFloat(row.max_coverage),
+      prefill: typeof row.prefill === "string" ? JSON.parse(row.prefill) : row.prefill,
+      status: row.status,
+      cardId: row.card_id,
+      merchantName: row.merchant_name,
+      mccCode: row.mcc_code,
+      amount: parseFloat(row.amount),
+      purchaseDate: row.purchase_date,
+      txDescription: row.tx_description,
+      claimId: row.claim_id,
+      claimSubmittedAt: row.claim_submitted_at,
+    }));
+
+    sendJSON(res, 200, history);
+  } catch (err) {
+    console.error("Get benefits history error:", err);
+    sendJSON(res, 500, { error: "Failed to fetch benefits history" });
+  }
+}
+
 
 // --- Router ---
 
@@ -329,6 +386,9 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === "GET" && pathname === "/api/transactions") {
       return await handleGetTransactions(req, res);
+    }
+    if (req.method === "GET" && pathname === "/api/benefits-history") {
+      return await handleGetBenefitsHistory(req, res);
     }
     if (req.method === "GET") {
       return serveStatic(req, res, pathname);
