@@ -221,6 +221,7 @@
     overflow-y: auto;
     scrollbar-width: thin;
     scrollbar-color: var(--border-light) transparent;
+    contain: content;
   }
   .history-list::-webkit-scrollbar { width: 6px; }
   .history-list::-webkit-scrollbar-track { background: transparent; }
@@ -234,7 +235,9 @@
     padding: 14px 18px;
     border-radius: 10px;
     transition: background 0.15s ease;
-    animation: slideIn 0.3s ease;
+  }
+  .history-item.new-item {
+    animation: fadeInItem 0.35s ease;
   }
   .history-item:hover {
     background: rgba(255, 255, 255, 0.02);
@@ -242,9 +245,9 @@
   .history-item + .history-item {
     border-top: 1px solid var(--border);
   }
-  @keyframes slideIn {
-    from { opacity: 0; transform: translateX(-8px); }
-    to { opacity: 1; transform: translateX(0); }
+  @keyframes fadeInItem {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
   }
 
   .history-icon {
@@ -598,6 +601,8 @@ const historySection = document.getElementById("historySection");
 
 let allBenefitsHistory = [];
 let currentFilter = "all";
+let knownBenefitIds = new Set();
+let lastDataHash = "";
 
 // Toggle collapse
 historyToggle.addEventListener("click", () => {
@@ -654,6 +659,10 @@ function formatCurrency(val) {
   return "$" + Number(val).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 }
 
+function computeDataHash(data) {
+  return JSON.stringify(data.map(d => d.id + (d.claimId || "") + d.status));
+}
+
 function renderHistory(data) {
   let filtered = data;
   if (currentFilter === "submitted") {
@@ -673,8 +682,11 @@ function renderHistory(data) {
     return;
   }
 
-  historyListEl.innerHTML = filtered.map(item => `
-    <div class="history-item">
+  historyListEl.innerHTML = filtered.map(item => {
+    const isNew = !knownBenefitIds.has(item.id);
+    if (isNew) knownBenefitIds.add(item.id);
+    return `
+    <div class="history-item${isNew ? ' new-item' : ''}">
       <div class="history-icon ${getBenefitIconClass(item.benefitType)}">${getBenefitIcon(item.benefitType)}</div>
       <div class="history-info">
         <div class="history-label">${item.label}</div>
@@ -685,8 +697,15 @@ function renderHistory(data) {
         <div class="amount-sub">up to ${formatCurrency(item.maxCoverage)}</div>
       </div>
       <div class="history-status">${getStatusBadge(item)}</div>
-    </div>
-  `).join("");
+    </div>`;
+  }).join("");
+
+  // Clean up new-item animation class after animation completes
+  requestAnimationFrame(() => {
+    historyListEl.querySelectorAll('.history-item.new-item').forEach(el => {
+      setTimeout(() => el.classList.remove('new-item'), 400);
+    });
+  });
 }
 
 function updateStats(data) {
@@ -710,9 +729,14 @@ async function fetchBenefitsHistory() {
   try {
     const res = await fetch("/api/benefits-history");
     const data = await res.json();
+    const newHash = computeDataHash(data);
+    const dataChanged = newHash !== lastDataHash;
     allBenefitsHistory = data;
     updateStats(data);
-    renderHistory(data);
+    if (dataChanged) {
+      lastDataHash = newHash;
+      renderHistory(data);
+    }
   } catch (err) {
     console.error("Failed to fetch benefits history:", err);
   }
