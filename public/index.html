@@ -267,6 +267,12 @@
   .history-info {
     min-width: 0;
   }
+  .history-info .history-label-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 2px;
+  }
   .history-info .history-label {
     font-size: 14px;
     font-weight: 600;
@@ -296,17 +302,19 @@
     color: var(--muted);
   }
 
-  .history-status {
+  .history-action {
     flex-shrink: 0;
   }
   .status-badge {
     font-size: 10px;
     font-weight: 700;
-    padding: 4px 10px;
+    padding: 3px 8px;
     border-radius: 100px;
     text-transform: uppercase;
     letter-spacing: 0.04em;
     white-space: nowrap;
+    display: inline-block;
+    flex-shrink: 0;
   }
   .status-badge.claimed {
     background: var(--good-dim);
@@ -319,6 +327,57 @@
   .status-badge.expired {
     background: rgba(107, 115, 133, 0.15);
     color: var(--muted);
+  }
+
+  .claim-action-btn {
+    padding: 6px 14px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: #ffffff;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 8px rgba(91, 140, 255, 0.25);
+  }
+  .claim-action-btn:hover {
+    background: #4679ee;
+    border-color: #4679ee;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(91, 140, 255, 0.35);
+  }
+  .claim-action-btn:active {
+    transform: translateY(0);
+  }
+  .claim-action-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  .claimed-action-btn {
+    padding: 6px 14px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    border: 1px solid rgba(52, 201, 138, 0.25);
+    background: rgba(52, 201, 138, 0.1);
+    color: var(--good);
+    cursor: default;
+    user-select: none;
+  }
+
+  .expired-action-btn {
+    padding: 6px 14px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    border: 1px solid var(--border);
+    background: rgba(107, 115, 133, 0.1);
+    color: var(--muted);
+    cursor: default;
+    user-select: none;
   }
 
   .history-empty {
@@ -518,6 +577,7 @@
       <button type="button" class="filter-tab" data-filter="purchase_protection">🛡️ Purchase Protection</button>
       <button type="button" class="filter-tab" data-filter="return_protection">↩️ Return Protection</button>
       <button type="button" class="filter-tab" data-filter="travel_delay">✈️ Travel Delay</button>
+      <button type="button" class="filter-tab" data-filter="pending">⏳ Pending</button>
       <button type="button" class="filter-tab" data-filter="submitted">✅ Claimed</button>
     </div>
 
@@ -638,17 +698,6 @@ function getBenefitIconClass(type) {
   }
 }
 
-function getStatusBadge(item) {
-  if (item.claimId || item.status === "submitted") {
-    return `<span class="status-badge claimed">Claimed</span>`;
-  }
-  const expiry = new Date(item.expiresAt);
-  if (expiry < new Date()) {
-    return `<span class="status-badge expired">Expired</span>`;
-  }
-  return `<span class="status-badge detected">Pending</span>`;
-}
-
 function formatDate(isoStr) {
   if (!isoStr) return "—";
   const d = new Date(isoStr);
@@ -667,6 +716,13 @@ function renderHistory(data) {
   let filtered = data;
   if (currentFilter === "submitted") {
     filtered = data.filter(d => d.claimId || d.status === "submitted");
+  } else if (currentFilter === "pending") {
+    filtered = data.filter(d => {
+      const isClaimed = Boolean(d.claimId || d.status === "submitted");
+      const expiry = d.expiresAt ? new Date(d.expiresAt) : null;
+      const isExpired = !isClaimed && expiry && expiry < new Date();
+      return !isClaimed && !isExpired;
+    });
   } else if (currentFilter !== "all") {
     filtered = data.filter(d => d.benefitType === currentFilter);
   }
@@ -685,18 +741,38 @@ function renderHistory(data) {
   historyListEl.innerHTML = filtered.map(item => {
     const isNew = !knownBenefitIds.has(item.id);
     if (isNew) knownBenefitIds.add(item.id);
+
+    const isClaimed = Boolean(item.claimId || item.status === "submitted");
+    const expiry = item.expiresAt ? new Date(item.expiresAt) : null;
+    const isExpired = !isClaimed && expiry && expiry < new Date();
+    const isPending = !isClaimed && !isExpired;
+
+    const tagHtml = isPending ? `<span class="status-badge detected">PENDING</span>` : '';
+
+    let actionBtnHtml = '';
+    if (isClaimed) {
+      actionBtnHtml = `<button class="claimed-action-btn" disabled>Claimed</button>`;
+    } else if (isExpired) {
+      actionBtnHtml = `<button class="expired-action-btn" disabled>Expired</button>`;
+    } else {
+      actionBtnHtml = `<button class="claim-action-btn" onclick="handleClaimClick('${item.id}', this)">Claim</button>`;
+    }
+
     return `
     <div class="history-item${isNew ? ' new-item' : ''}">
       <div class="history-icon ${getBenefitIconClass(item.benefitType)}">${getBenefitIcon(item.benefitType)}</div>
       <div class="history-info">
-        <div class="history-label">${item.label}</div>
+        <div class="history-label-row">
+          <span class="history-label">${item.label}</span>
+          ${tagHtml}
+        </div>
         <div class="history-merchant">${item.merchantName} · ${formatDate(item.purchaseDate)} · ${item.cardId}</div>
       </div>
       <div class="history-amount">
         <div class="amount-value">$${Number(item.amount).toFixed(2)}</div>
         <div class="amount-sub">up to ${formatCurrency(item.maxCoverage)}</div>
       </div>
-      <div class="history-status">${getStatusBadge(item)}</div>
+      <div class="history-action">${actionBtnHtml}</div>
     </div>`;
   }).join("");
 
@@ -706,6 +782,40 @@ function renderHistory(data) {
       setTimeout(() => el.classList.remove('new-item'), 400);
     });
   });
+}
+
+async function handleClaimClick(entitlementId, btnEl) {
+  if (!btnEl) return;
+  btnEl.disabled = true;
+  const originalText = btnEl.textContent;
+  btnEl.textContent = "Submitting...";
+  
+  try {
+    const res = await fetch("/api/claims", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ entitlementId, fields: {} }),
+    });
+
+    if (res.ok) {
+      btnEl.textContent = "Claimed";
+      btnEl.className = "claimed-action-btn";
+      fetchBenefitsHistory();
+    } else {
+      btnEl.textContent = "Failed";
+      setTimeout(() => {
+        btnEl.textContent = originalText;
+        btnEl.disabled = false;
+      }, 2000);
+    }
+  } catch (err) {
+    console.error("Failed to claim benefit:", err);
+    btnEl.textContent = "Failed";
+    setTimeout(() => {
+      btnEl.textContent = originalText;
+      btnEl.disabled = false;
+    }, 2000);
+  }
 }
 
 function updateStats(data) {
@@ -725,6 +835,23 @@ function updateStats(data) {
   historyCountEl.textContent = total;
 }
 
+function syncLiveFeedWithHistory(historyData) {
+  if (!historyData || !alertsEl) return;
+  historyData.forEach(item => {
+    const isClaimed = Boolean(item.claimId || item.status === "submitted");
+    if (isClaimed) {
+      const card = alertsEl.querySelector(`[data-entitlement-id="${item.id}"]`);
+      if (card) {
+        const btn = card.querySelector(".claim-btn");
+        if (btn && !btn.disabled) {
+          btn.disabled = true;
+          btn.textContent = "✓ Claim Submitted";
+        }
+      }
+    }
+  });
+}
+
 async function fetchBenefitsHistory() {
   try {
     const res = await fetch("/api/benefits-history");
@@ -733,6 +860,7 @@ async function fetchBenefitsHistory() {
     const dataChanged = newHash !== lastDataHash;
     allBenefitsHistory = data;
     updateStats(data);
+    syncLiveFeedWithHistory(data);
     if (dataChanged) {
       lastDataHash = newHash;
       renderHistory(data);
@@ -777,6 +905,19 @@ async function pollForNewBenefits() {
         renderAlert(ent);
       });
     }
+
+    entitlements.forEach(ent => {
+      if (ent.status === "submitted") {
+        const card = alertsEl.querySelector(`[data-entitlement-id="${ent.id}"]`);
+        if (card) {
+          const btn = card.querySelector(".claim-btn");
+          if (btn && !btn.disabled) {
+            btn.disabled = true;
+            btn.textContent = "✓ Claim Submitted";
+          }
+        }
+      }
+    });
   } catch (err) {
     console.error("Polling failed:", err);
   }
@@ -860,10 +1001,13 @@ function flashNoMatch() {
 function renderAlert(ent) {
   const card = document.createElement("div");
   card.className = "alert-card";
+  card.dataset.entitlementId = ent.id;
 
   const prefillRows = Object.entries(ent.prefill)
     .map(([k, v]) => `<div><span>${labelize(k)}</span><span>${v ?? "—"}</span></div>`)
     .join("");
+
+  const isClaimed = ent.status === "submitted";
 
   card.innerHTML = `
     <div class="alert-top">
@@ -873,11 +1017,12 @@ function renderAlert(ent) {
     <h3>${ent.label}</h3>
     <p class="reason">${ent.reason}</p>
     <div class="prefill">${prefillRows}</div>
-    <button class="claim-btn">File Pre-Filled Claim</button>
+    <button class="claim-btn"${isClaimed ? ' disabled' : ''}>${isClaimed ? '✓ Claim Submitted' : 'File Pre-Filled Claim'}</button>
   `;
 
   card.querySelector(".claim-btn").addEventListener("click", async (btnEvent) => {
     const btn = btnEvent.target;
+    if (btn.disabled) return;
     btn.disabled = true;
     btn.textContent = "Submitting...";
     const res = await fetch("/api/claims", {
@@ -896,6 +1041,14 @@ function renderAlert(ent) {
   });
 
   alertsEl.prepend(card);
+
+  // Limit Live Feed to 5 cards max so the section doesn't become too long
+  const cards = alertsEl.querySelectorAll(".alert-card");
+  if (cards.length > 5) {
+    for (let i = 5; i < cards.length; i++) {
+      cards[i].remove();
+    }
+  }
 }
 
 function labelize(key) {
